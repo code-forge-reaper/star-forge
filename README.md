@@ -1,15 +1,16 @@
 # star-forge
 
+* this is a template for a simple desktop-like env on the browser
+* complete with a terminal, some external apps and some other goodies :D
+
 To install dependencies:
 
 ```bash
-bun install
+pnpm install
 ```
 
 To run:
 
 ```bash
-bun run index.ts
+pnpm vite
 ```
-
-This project was created using `bun init` in bun v1.2.4. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
