@@ -1,0 +1,171 @@
+/*style.css*/
+* {
+  transition: 200ms;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+body {
+  background: rgb(20, 20, 20);
+  color: white;
+  font-family: monospace;
+  font-weight: bold;
+  font-size: 18px;
+  overflow: hidden;
+}
+
+button {
+  font-size: 16px;
+  border-radius: 8px;
+  background: rgb(30, 30, 30);
+  color: white;
+  border: none;
+  padding: 6px 12px;
+}
+
+button:active {
+  background: rgb(120, 120, 120);
+}
+
+button:hover {
+  background: rgb(50, 50, 50);
+  transform: scale(1.1);
+  cursor: pointer;
+}
+
+/* Desktop */
+#desktop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgb(25, 25, 25);
+}
+
+/* Taskbar */
+#taskbar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 40px;
+  background: rgb(15, 15, 15);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-top: 2px solid rgb(50, 50, 50);
+}
+
+.taskbar-icon {
+  width: 32px;
+  height: 32px;
+  margin-right: 8px;
+  background: rgb(40, 40, 40);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* Window (app) styling */
+.window {
+  position: absolute;
+  width: 700px;
+  height: 500px;
+  background: rgb(30, 30, 30);
+  border: 2px solid rgb(70, 70, 70);
+  border-radius: 5px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  resize: both;
+  overflow: hidden;
+  transition: none;
+}
+
+.window * {
+  transition: none !important;
+}
+
+.window-header {
+  background: rgb(50, 50, 50);
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: grab;
+}
+
+.window-title {
+  font-size: 16px;
+}
+
+.window-controls {
+  display: flex;
+}
+
+.window-controls button {
+  width: 24px;
+  height: 24px;
+  margin-left: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(100, 30, 30);
+  border-radius: 3px;
+}
+
+.window-controls button:hover {
+  background: rgb(150, 50, 50);
+}
+
+.window-body {
+  flex-grow: 1;
+  padding: 8px;
+  overflow: auto;
+  background: rgb(20, 20, 20);
+}
+
+/* Desktop icons */
+.desktop-icon {
+  position: absolute;
+  width: 80px;
+  height: 80px;
+  margin: 10px;
+  background: rgb(40, 40, 40);
+  border: 2px solid rgb(70, 70, 70);
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  text-align: center;
+  padding: 4px;
+}
+
+.desktop-icon:hover {
+  background: rgb(60, 60, 60);
+}
+
+.desktop-icon img {
+  width: 48px;
+  height: 48px;
+}
+
+.desktop-icon span {
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+/* Terminal container styling */
+.terminal-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}

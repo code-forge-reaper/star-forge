@@ -1,0 +1,16 @@
+{
+  "name": "star-forge",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@xterm/xterm": "^5.5.0",
+    "wasmoon": "^1.16.0",
+    "xterm-pty": "^0.11.1"
+  }
+}
