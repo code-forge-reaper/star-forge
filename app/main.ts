@@ -1,5 +1,4 @@
 // main.ts
-import "./style.css";
 import "@xterm/xterm/css/xterm.css";
 import { CreateTerminal } from "./terminal";
 import { setup as setupClockModule } from "./modules/clock";
@@ -16,7 +15,6 @@ vfs.createDirectory("/scripts");
 vfs.writeFile("/Desktop/welcome.txt", "Welcome to Star Forge Desktop!");
 
 // Add sample binary/icon files. The improved VirtualFS now converts remote files to data URLs.
-await vfs.addFile("/Desktop/images/cat.gif", "app/images/2664bf07288884cdb584db737b6f3263.gif");
 await vfs.addFile("/Icons/terminal.svg", "app/images/terminal.svg");
 await vfs.addFile("/Icons/folder-black.svg", "app/images/folder-black.svg");
 await vfs.addFile("/Icons/text-x-script.svg", "app/images/text-x-script.svg");
