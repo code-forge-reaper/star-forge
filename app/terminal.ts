@@ -1,18 +1,16 @@
 // terminal.ts
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import setupLua from "./apps/lua";
+import { uint8ArrayToBase64, vfs, resolvePath, getParentDirectory } from "../common";
 import setupNova from "./apps/nova-interp";
-import {
-	FS,
-	cDir,
-	resolvePath,
-	getFSObject,
-	createFile,
-	GET_CDIR_FILES,
-	setCDir,
-	notifyFSChange,
-} from "./filesystem";
+const applications: { [name: string]: { description: string, callBack: Function } } = {}
+const terminal = {
+	cwd: "/",
+	registerApp: (name: string, description: string, callBack: Function) => applications[name] = { description, callBack },
+	echo: (data: string | Uint8Array, callback?: () => void): void => {}
+}
+
+const applicationsToRegister: Function[] = [setupNova]
 
 /**
  * Creates a new terminal window instance.
@@ -28,481 +26,298 @@ export function createTerminalWindow(): HTMLElement {
 	container.appendChild(termDiv);
 
 	// Instantiate the xterm.js Terminal
-	const term = new Terminal();
+	const term = new Terminal({
+		cursorBlink: true,
+		scrollback: 1000,
+		tabStopWidth: 4,
+	});
 	term.open(termDiv);
+	setTimeout(() => term.focus(), 10);
+	terminal.echo = term.writeln
 
-	// Set up the prompt and state variables for this terminal instance
-	let PROMPT = `cross@<redacted> in / $ `;
-	term.write(PROMPT);
-	let buff = "";
-	let commandHistory: string[] = [];
-	let historyIndex = commandHistory.length;
+	// Set up shell commands (with auto complete support).
+	setupTerminalCommands(term);
 
-	// Registered applications (commands)
-	const APPLICATIONS: Record<
-		string,
-		{ description: string; callback: (...args: string[]) => number }
-	> = {};
-
-	// Minimal terminal API functions
-	function echo(arg: string) {
-		term.writeln(arg);
-	}
-
-	function colorText(text: string, color: string): string {
-		let code: string;
-		switch (color.toLowerCase()) {
-			case "red":
-				code = "\x1B[31m";
-				break;
-			case "green":
-				code = "\x1B[32m";
-				break;
-			case "yellow":
-				code = "\x1B[33m";
-				break;
-			case "blue":
-				code = "\x1B[34m";
-				break;
-			case "magenta":
-				code = "\x1B[35m";
-				break;
-			case "cyan":
-				code = "\x1B[36m";
-				break;
-			default:
-				code = "";
-		}
-		return code + text + "\x1B[0m";
-	}
-
-	function registerApp(
-		name: string,
-		description: string,
-		callback: (...args: string[]) => number
-	) {
-		if (APPLICATIONS[name])
-			term.writeln(
-				`\x1B[1;3;31mone of your loaded apps attempted to overwrite ${name}\x1B[0m`
-			);
-		APPLICATIONS[name] = { description, callback };
-	}
-
-	function getCwd() {
-		return cDir.length === 1 ? "/" : "/" + cDir.slice(1).join("/");
-	}
-
-	// Register built‑in commands
-	registerApp("help", "displays this message", (...args) => {
-		term.writeln("this is still a wip website");
-		term.writeln("commands:");
-		for (let app in APPLICATIONS) {
-			echo(`${app}  -  ${APPLICATIONS[app].description}`);
-		}
-		return 0;
-	});
-
-	registerApp("clear", "clears the screen", (...args) => {
-		term.clear();
-		return 0;
-	});
-
-	registerApp("cd", "changes the current directory", (...paths) => {
-		for (let arg of paths) {
-			if (arg.startsWith("--")) {
-				term.writeln(`unknown option: ${arg}`);
-				return 1;
-			}
-		}
-		if (paths.length === 0) {
-			setCDir(["/"]);
-		} else {
-			if (paths.length > 1) {
-				echo("too many arguments");
-				return 1;
-			}
-			const newPath = resolvePath(paths[0], cDir);
-			const node = getFSObject(newPath);
-			if (node === undefined) {
-				echo(`cd: no such file or directory: ${paths[0]}`);
-				return 1;
-			}
-			if (typeof node !== "object") {
-				echo(`cd: not a directory: ${paths[0]}`);
-				return 1;
-			}
-			setCDir(newPath);
-		}
-		PROMPT = `cross@<redacted> in ${getCwd()} $ `;
-		return 0;
-	});
-
-	registerApp("ls", "lists the files in the current directory", (...paths) => {
-		for (let arg of paths) {
-			if (arg.startsWith("--")) {
-				term.writeln(`unknown option: ${arg}`);
-				return 1;
-			}
-		}
-		if (paths.length === 0) {
-			let node = getFSObject(cDir);
-			if (node && typeof node === "object") {
-				for (let file of Object.keys(node)) echo(file);
-			}
-		} else {
-			const resolvedPath = resolvePath(paths[0], cDir);
-			const node = getFSObject(resolvedPath);
-			if (node === undefined) {
-				echo(`ls: cannot access '${paths[0]}': No such file or directory`);
-				return 1;
-			}
-			if (typeof node === "object") {
-				for (let file of Object.keys(node)) echo(file);
-			} else {
-				echo(paths[0]);
-			}
-		}
-		return 0;
-	});
-
-	registerApp("cat", "outputs the content of the given files", (...paths) => {
-		if (paths.length === 0) {
-			return 1;
-		}
-		for (let filePath of paths) {
-			const resolvedPath = resolvePath(filePath, cDir);
-			const node = getFSObject(resolvedPath);
-			if (node === undefined) {
-				echo(`cat: ${filePath}: No such file or directory`);
-			} else if (typeof node === "object") {
-				echo(`cat: ${filePath}: Is a directory`);
-			} else {
-				echo(node);
-			}
-		}
-		return 0;
-	});
-
-	registerApp("mkdir", "creates a new directory", (...args) => {
-		if (args.length === 0) {
-			echo("Usage: mkdir [directory]");
-			return 1;
-		}
-		for (let dirPath of args) {
-			const resolvedPath = resolvePath(dirPath, cDir);
-			if (resolvedPath.length <= 1) {
-				echo(`mkdir: cannot create directory '${dirPath}': Invalid path`);
-				return 1;
-			}
-			const parentPath = resolvedPath.slice(0, -1);
-			const dirName = resolvedPath[resolvedPath.length - 1];
-			const parent = getFSObject(parentPath);
-			if (!parent) {
-				echo(`mkdir: cannot create directory '${dirPath}': Parent directory does not exist`);
-				return 1;
-			}
-			if (typeof parent !== "object") {
-				echo(`mkdir: cannot create directory '${dirPath}': Parent is not a directory`);
-				return 1;
-			}
-			if (dirName in parent) {
-				echo(`mkdir: cannot create directory '${dirPath}': File or directory already exists`);
-				return 1;
-			}
-			parent[dirName] = {};
-		}
-		notifyFSChange()
-		return 0;
-	});
-
-	registerApp("touch", "creates a new file", (...args) => {
-		if (args.length < 1) {
-			echo("Usage: touch <file>");
-			return 1;
-		}
-		const filePath = args[0];
-		try {
-			createFile(filePath, "");
-		} catch (e) {
-			echo(`${e}`)
-			return 1
-		}
-		return 0;
-	});
-
-	registerApp("rm", "removes a file or a directory (use -r for directories)", (...args) => {
-		if (args.length === 0) {
-			echo("Usage: rm [-r] <file/directory>");
-			return 1;
-		}
-
-		const recursive = args.includes("-r");
-		const paths = args.filter(arg => arg !== "-r");
-
-		for (let path of paths) {
-			const resolvedPath = resolvePath(path, cDir);
-			if (resolvedPath.length <= 1) {
-				echo(`rm: cannot remove '${path}': Invalid path`);
-				return 1;
-			}
-	    
-			const parentPath = resolvedPath.slice(0, -1);
-			const name = resolvedPath[resolvedPath.length - 1];
-			const parent = getFSObject(parentPath);
-
-			if (!parent || typeof parent !== "object" || !(name in parent)) {
-				echo(`rm: cannot remove '${path}': No such file or directory`);
-				return 1;
-			}
-
-			if (typeof parent[name] === "object" && Object.keys(parent[name]).length > 0 && !recursive) {
-				echo(`rm: cannot remove '${path}': Directory not empty (use -r)`);
-				return 1;
-			}
-
-			delete parent[name];
-		}
-
-		notifyFSChange();
-		return 0;
-	});
-	registerApp("mv", "moves or renames a file/directory", (source, dest) => {
-		if (!source || !dest) {
-			echo("Usage: mv <source> <destination>");
-			return 1;
-		}
-
-		const srcPath = resolvePath(source, cDir);
-		const destPath = resolvePath(dest, cDir);
-
-		if (srcPath.length <= 1) {
-			echo(`mv: cannot move '${source}': Invalid path`);
-			return 1;
-		}
-
-		const srcParentPath = srcPath.slice(0, -1);
-		const srcName = srcPath[srcPath.length - 1];
-		const srcParent = getFSObject(srcParentPath);
-
-		if (!srcParent || typeof srcParent !== "object" || !(srcName in srcParent)) {
-			echo(`mv: cannot move '${source}': No such file or directory`);
-			return 1;
-		}
-
-		const destParentPath = destPath.slice(0, -1);
-		const destName = destPath[destPath.length - 1];
-		const destParent = getFSObject(destParentPath);
-		const destObject = getFSObject(destPath);
-
-		if (!destParent || typeof destParent !== "object") {
-			echo(`mv: cannot move '${source}': Destination directory does not exist`);
-			return 1;
-		}
-
-		// If destination is a directory, move inside it
-		if (typeof destObject === "object") {
-			destObject[srcName] = srcParent[srcName];
-		} else {
-			destParent[destName] = srcParent[srcName];
-		}
-
-		delete srcParent[srcName];
-		notifyFSChange();
-		return 0;
-	});
-	function deepCopy(obj: any): any {
-		if (typeof obj !== "object" || obj === null) return obj;
-		const copy: any = Array.isArray(obj) ? [] : {};
-		for (let key in obj) {
-			copy[key] = deepCopy(obj[key]);
-		}
-		return copy;
-	}
-
-	registerApp("cp", "copies a file or directory (use -r for directories)", (...args) => {
-		if (args.length < 2) {
-			echo("Usage: cp [-r] <source> <destination>");
-			return 1;
-		}
-
-		const recursive = args.includes("-r");
-		const paths = args.filter(arg => arg !== "-r");
-
-		if (paths.length !== 2) {
-			echo("cp: requires exactly two arguments");
-			return 1;
-		}
-
-		const [source, dest] = paths;
-		const srcPath = resolvePath(source, cDir);
-		const destPath = resolvePath(dest, cDir);
-		const srcObject = getFSObject(srcPath);
-		const destObject = getFSObject(destPath);
-		const destParentPath = destPath.slice(0, -1);
-		const destName = destPath[destPath.length - 1];
-		const destParent = getFSObject(destParentPath);
-
-		if (!srcObject) {
-			echo(`cp: cannot copy '${source}': No such file or directory`);
-			return 1;
-		}
-
-		if (typeof srcObject === "object" && !recursive) {
-			echo(`cp: -r not specified; omitting directory '${source}'`);
-			return 1;
-		}
-
-		if (!destParent || typeof destParent !== "object") {
-			echo(`cp: cannot copy to '${dest}': Destination directory does not exist`);
-			return 1;
-		}
-
-		if (typeof destObject === "object") {
-			// Copy into directory
-			destObject[source.split("/").pop()!] = deepCopy(srcObject);
-		} else {
-			// Overwrite or create new
-			destParent[destName] = deepCopy(srcObject);
-		}
-
-		notifyFSChange();
-		return 0;
-	});
-
-	// Register external applications (such as Lua and Nova)
-	const ApplicationsToRegister = [setupLua, setupNova];
-	const TERMINAL = {
-		echo,
-		registerApp,
-		getCwd,
-		resolvePath,
-		getFSObject,
-		createFile,
-		GET_CDIR_FILES,
-		colorText,
-	};
-	for (let app of ApplicationsToRegister) {
-		app(TERMINAL);
-	}
-
-	// Handle input and key events
-	term.onKey((e) => {
-		if (e.domEvent.key === "ArrowUp") {
-			if (commandHistory.length > 0 && historyIndex > 0) {
-				historyIndex--;
-				buff = commandHistory[historyIndex];
-				term.write("\r" + PROMPT + buff + " ".repeat(10) + "\r" + PROMPT + buff);
-			}
-			return;
-		} else if (e.domEvent.key === "ArrowDown") {
-			if (commandHistory.length > 0 && historyIndex < commandHistory.length - 1) {
-				historyIndex++;
-				buff = commandHistory[historyIndex];
-			} else {
-				buff = "";
-				historyIndex = commandHistory.length;
-			}
-			term.write("\r" + PROMPT + buff + " ".repeat(10) + "\r" + PROMPT + buff);
-			return;
-		}
-
-		if (e.domEvent.key === "Enter") {
-			term.writeln("");
-			if (buff.trim()) {
-				commandHistory.push(buff);
-				historyIndex = commandHistory.length;
-				const parts = buff.trim().split(/\s+/g);
-				const command = parts[0];
-				if (APPLICATIONS[command]) {
-					const exitCode = APPLICATIONS[command].callback(...parts.slice(1)) || 0;
-					if (exitCode !== 0) {
-						term.writeln(
-							colorText(
-								`"${command}" exited with non-zero error code: ${exitCode}`,
-								"red"
-							)
-						);
-					}
-				} else {
-					term.writeln(colorText(`unknown command "${command}"`, "red"));
-				}
-			}
-			term.write(PROMPT);
-			buff = "";
-		} else if (e.domEvent.key === "Backspace") {
-			if (buff.length > 0) {
-				buff = buff.slice(0, -1);
-				term.write("\b \b");
-			}
-		} else if (e.domEvent.key === "Tab") {
-			e.domEvent.preventDefault();
-			const tokens = buff.trim().split(/\s+/);
-			if (tokens.length === 0) return;
-			let lastToken = tokens[tokens.length - 1];
-			let completions: string[] = [];
-			if (tokens.length === 1) {
-				completions = Object.keys(APPLICATIONS).filter((cmd) =>
-					cmd.startsWith(lastToken)
-				);
-			} else {
-				let basePath = "";
-				let prefix = lastToken;
-				const slashIndex = lastToken.lastIndexOf("/");
-				if (slashIndex !== -1) {
-					basePath = lastToken.substring(0, slashIndex + 1);
-					prefix = lastToken.substring(slashIndex + 1);
-				}
-				const baseResolved =
-					basePath === "" ? cDir.slice() : resolvePath(basePath, cDir);
-				const node = getFSObject(baseResolved);
-				if (node && typeof node === "object") {
-					completions = Object.keys(node)
-						.filter((item) => item.startsWith(prefix))
-						.map((item) => basePath + item);
-				}
-			}
-			if (completions.length === 1) {
-				tokens[tokens.length - 1] = completions[0];
-				buff = tokens.join(" ") + " ";
-				term.write("\r" + PROMPT + buff);
-			} else if (completions.length > 1) {
-				echo("");
-				echo(completions.join("    "));
-				term.write("\r" + PROMPT + buff);
-			}
-		} else {
-			if (e.key === "\x03") {
-				// Handle Ctrl-C
-				echo(buff + "^C");
-				buff = "";
-				term.write(PROMPT);
-			} else {
-				buff += e.key;
-				term.write(e.key);
-			}
-		}
-	});
-
-	term.focus();
 	return container;
 }
 
-export function CreateTerminal(iconsContainer, createWindow, createClickableIcon) {
+/**
+ * Sets up the interactive command shell for the terminal.
+ */
+function setupTerminalCommands(term: Terminal) {
+	let inputBuffer = "";
+	// List of available commands.
+	const commands = ["help", "clear", "pwd", "ls", "cd", "mkdir", "cat", "touch", "rm"];
 
+	// Display the initial prompt.
+	prompt();
+
+	// Listen for terminal input.
+	term.onData((data) => {
+		switch (data) {
+			case "\r": // Enter key
+				term.write("\r\n");
+				handleCommand(inputBuffer);
+				inputBuffer = "";
+				prompt();
+				break;
+			case "\u0009": // Tab key (\t)
+				autoComplete();
+				break;
+			case "\u007F": // Backspace (DEL)
+				// Do not allow deletion beyond current inputBuffer.
+				if (inputBuffer.length > 0) {
+					inputBuffer = inputBuffer.slice(0, -1);
+					term.write("\b \b");
+				}
+				break;
+			default:
+				inputBuffer += data;
+				term.write(data);
+		}
+	});
+
+	/**
+	 * Displays the prompt with the current working directory.
+	 */
+	function prompt() {
+		term.write(`\r\n${terminal.cwd} $ `);
+	}
+
+	/**
+	 * Handles the entered command string.
+	 */
+	async function handleCommand(command: string) {
+		const args = command.trim().split(" ").filter((a) => a.length > 0);
+		if (args.length === 0) return;
+
+		const cmd = args[0];
+		const params = args.slice(1);
+		switch (cmd) {
+			case "help":
+				term.writeln("Available commands:");
+				term.writeln("  help               Show available commands.");
+				term.writeln("  clear              Clear the terminal.");
+				term.writeln("  pwd                Print the working directory.");
+				term.writeln("  ls [dir]           List files in directory (default: current directory).");
+				term.writeln("  cd [dir]           Change current directory (default: '/').");
+				term.writeln("  mkdir <dir>        Create a new directory.");
+				term.writeln("  cat <file>         View a file's contents (if text).");
+				term.writeln("  touch <file>       Create an empty file.");
+				term.writeln("  rm <file/dir>      Remove a file or an empty directory.");
+				if (Object.keys(applications).length > 0) {
+					term.writeln("Available console applications:");
+
+					for (let cmd of Object.keys(applications)) {
+						term.writeln(` ${cmd}    ${applications[cmd].description}`)
+					}
+				}
+				break;
+			case "clear":
+				term.clear();
+				break;
+			case "pwd":
+				term.writeln(terminal.cwd);
+				break;
+			case "ls":
+				{
+					let target = terminal.cwd;
+					if (params.length > 0) {
+						target = resolvePath(terminal.cwd, params[0]);
+						// Handle ".." in path
+						if (params[0] === "..") {
+							target = getParentDirectory(terminal.cwd);
+						}
+					}
+					const list = vfs.listDirectory(target);
+					if (list == null) {
+						term.writeln("Directory not found.");
+					} else if (list.length === 0) {
+						term.writeln("Directory is empty.");
+					} else {
+						term.writeln(list.join("   "));
+					}
+				}
+				break;
+			case "cd":
+				{
+					if (params.length === 0) {
+						terminal.cwd = "/";
+					} else {
+						let target = resolvePath(terminal.cwd, params[0]);
+						// Handle ".." in path
+						if (params[0] === "..") {
+							target = getParentDirectory(terminal.cwd);
+						}
+
+						// Check if target exists and is a directory.
+						const metadata = vfs.getMetadata(target);
+						if (!metadata) {
+							term.writeln(`No such directory: ${target}`);
+						} else {
+							// Using ls to verify it's a directory.
+							const list = vfs.listDirectory(target);
+							if (list === null) {
+								term.writeln(`${target} is not a directory`);
+							} else {
+								terminal.cwd = target;
+							}
+						}
+					}
+				}
+				break;
+			case "mkdir":
+				{
+					if (params.length === 0) {
+						term.writeln("Usage: mkdir <directory>");
+					} else {
+						const dirPath = resolvePath(terminal.cwd, params[0]);
+						const success = vfs.createDirectory(dirPath);
+						if (success) {
+							term.writeln(`Directory ${dirPath} created.`);
+						} else {
+							term.writeln(`Failed to create directory ${dirPath}.`);
+						}
+					}
+				}
+				break;
+			case "cat":
+				{
+					if (params.length === 0) {
+						term.writeln("Usage: cat <file>");
+					} else {
+						const filePath = resolvePath(terminal.cwd, params[0]);
+						const metadata = vfs.getMetadata(filePath);
+						if (!metadata) {
+							term.writeln("File not found or is not a file.");
+						} else if (!metadata.fileType?.startsWith("text/")) {
+							term.writeln("<binary>");
+						} else {
+							const content = vfs.readFile(filePath);
+							if (content === null) {
+								term.writeln("File not found or is not a file.");
+							} else {
+								const decoder = new TextDecoder();
+								term.writeln(decoder.decode(content));
+							}
+						}
+					}
+				}
+				break;
+			case "touch":
+				{
+					if (params.length === 0) {
+						term.writeln("Usage: touch <file>");
+					} else {
+						const filePath = resolvePath(terminal.cwd, params[0]);
+						const success = vfs.writeFile(filePath, new Uint8Array());
+						if (success) {
+							term.writeln(`File ${filePath} created.`);
+						} else {
+							term.writeln(`Failed to create file ${filePath}.`);
+						}
+					}
+				}
+				break;
+			case "rm":
+				{
+					if (params.length === 0) {
+						term.writeln("Usage: rm <file/directory>");
+					} else {
+						const target = resolvePath(terminal.cwd, params[0]);
+						const success = vfs.deleteNode(target);
+						if (success) {
+							term.writeln(`Removed ${target}.`);
+						} else {
+							term.writeln(`Failed to remove ${target}. The directory may not be empty or it may not exist.`);
+						}
+					}
+				}
+				break;
+			default:
+				if (!applications[cmd])
+					term.writeln(`Command not found: ${cmd}`);
+				else
+					applications[cmd].callBack(...params)
+		}
+	}
+
+
+	/**
+	 * Completes the current token in the inputBuffer.
+	 * For the first token, matches against available commands.
+	 * For subsequent tokens, uses files/directories from the virtual FS.
+	 */
+	function autoComplete() {
+		// Split the inputBuffer to work on the last token.
+		const tokens = inputBuffer.split(" ");
+		if (tokens.length === 0) return;
+		const lastToken = tokens[tokens.length - 1];
+
+		// If we're completing the command (first token)
+		if (tokens.length === 1) {
+			const candidates = commands.filter((cmd) => cmd.startsWith(lastToken));
+			if (candidates.length === 1) {
+				const completion = candidates[0].substring(lastToken.length);
+				inputBuffer += completion;
+				term.write(completion);
+			} else if (candidates.length > 1) {
+				term.write("\r\n" + candidates.join("   ") + "\r\n");
+				prompt();
+				term.write(inputBuffer);
+			}
+		} else {
+			// Otherwise, we are completing a file or directory name.
+			// Split last token into directory and file part by the last "/".
+			let dirPath = "";
+			let filePart = "";
+			const lastSlashIndex = lastToken.lastIndexOf("/");
+			if (lastSlashIndex !== -1) {
+				dirPath = lastToken.substring(0, lastSlashIndex);
+				filePart = lastToken.substring(lastSlashIndex + 1);
+			} else {
+				filePart = lastToken;
+			}
+			let searchDir = terminal.cwd;
+			if (dirPath) {
+				searchDir = resolvePath(terminal.cwd, dirPath);
+			}
+			const list = vfs.listDirectory(searchDir);
+			if (!list) return;
+
+			const candidates = list.filter((item) => item.startsWith(filePart));
+			if (candidates.length === 1) {
+				const completion = candidates[0].substring(filePart.length);
+				// Append the completion only to the last token.
+				inputBuffer += completion;
+				term.write(completion);
+			} else if (candidates.length > 1) {
+				term.write("\r\n" + candidates.join("   ") + "\r\n");
+				prompt();
+				term.write(inputBuffer);
+			}
+		}
+	}
+
+	applicationsToRegister.forEach(e => e(terminal))
+}
+
+/**
+ * Creates the Terminal icon button and attaches the terminal window.
+ */
+export function CreateTerminal(iconsContainer: HTMLElement, createWindow: Function) {
 	// Add the Terminal icon (static).
-	const terminalIcon = document.createElement("div");
-	terminalIcon.classList.add("desktop-icon");
-	terminalIcon.style.position = "absolute";
-	terminalIcon.style.left = "20px";
-	terminalIcon.style.top = "20px";
-	terminalIcon.innerHTML = `<img src="app/images/terminal.svg" alt="Terminal" style="width: 64px; height: 64px; display: block; margin: 0 auto;">
-		<span style="text-align: center; display: block;">Terminal</span>`;
-	terminalIcon.onclick = () => {
-		import("./terminal").then((module) => {
-			const terminalContent = module.createTerminalWindow();
-			createWindow("Terminal", "Terminal", terminalContent);
-		});
-	};
-	iconsContainer.appendChild(terminalIcon);
+	const openTerminal = document.createElement("button");
 
+	openTerminal.classList.add("desktop-icon");
+
+	openTerminal.innerHTML = `<img src="data:image/svg+xml;base64,${uint8ArrayToBase64(
+		vfs.readFile("/Icons/terminal.svg")
+	)}" alt="Terminal" style="width: 64px; height: 64px; display: block; margin: 0 auto;">
+    <span style="text-align: center; display: block;">Terminal</span>`;
+	openTerminal.onclick = () => {
+		const terminalContent = createTerminalWindow();
+		createWindow("Terminal", "Terminal", terminalContent);
+	};
+	iconsContainer.appendChild(openTerminal);
 }

@@ -1,5 +1,6 @@
-import {Interpreter} from "./nova.js"
-const example=`
+import { Interpreter } from "./nova.js"
+import { vfs, resolvePath, getParentDirectory } from "../../common.js";
+const example = `
 var x = 39
 var y number = 40
 var rect = {
@@ -26,7 +27,7 @@ end
 `
 function sprintf(format, ...args) {
     let argIndex = 0;
-    if(args.length ==0)
+    if (args.length == 0)
         return format
     return format.replace(/%[sidfo]/g, match => {
         if (argIndex >= args.length) return match; // If not enough arguments, keep the placeholder
@@ -41,18 +42,41 @@ function sprintf(format, ...args) {
     });
 }
 
-export default function setup(terminal){
-    terminal.createFile("main.flux", example)
-    terminal.registerApp("nova", "NovaScript/Flux V3 interpreter",(...args)=>{
-        const FILES = terminal.GET_CDIR_FILES()
-        let content = FILES[args[0]]
-        if(!content)
-            return 1
-        const runtime = new Interpreter(content)
-        runtime.globals.define('print', (...args)=>{
-            terminal.echo(sprintf(...args))
-        })
-        runtime.interpret()
+export default function setupNova(terminal) {
+    vfs.writeFile("/scripts/main.flux", example)
+    terminal.registerApp("nova", "nova interpreter", (...args) => {
+
+        let target = terminal.cwd;
+        if (args.length > 0) {
+            target = resolvePath(terminal.cwd, args[0]);
+            // Handle ".." in path
+            if (args[0] === "..") {
+                target = getParentDirectory(terminal.cwd);
+            }
+        }
+        const list = vfs.listDirectory(target);
+        console.log(list)
+        const filePath = resolvePath(terminal.cwd, args[0]);
+        const metadata = vfs.getMetadata(filePath);
+        if (!metadata) {
+            terminal.echo("File not found or is not a file.");
+        } else {
+            const content = vfs.readFile(filePath);
+            if (content === null) {
+                terminal.echo("File not found or is not a file.");
+            } else {
+                const decoder = new TextDecoder();
+
+                const runtime = new Interpreter(decoder.decode(content))
+
+                runtime.globals.define('print', (...args) => {
+                    terminal.echo(sprintf(...args))
+                })
+                runtime.interpret()
+
+            }
+        }
+ 
     })
     //console.log(runtime.parseBlock())
 }
